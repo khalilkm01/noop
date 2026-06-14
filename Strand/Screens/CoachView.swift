@@ -236,10 +236,13 @@ struct CoachView: View {
                 codexStatusRow("Bridge", value: coach.codexBridgeState.title,
                                tone: codexBridgeTone, pulsing: codexBridgePulsing)
                 codexStatusRow("Codex CLI", value: codexCodexLine, tone: codexCLITone)
+                codexStatusRow("Model", value: coach.model, tone: .accent)
                 codexStatusRow("Data target", value: coach.dataTargetName, tone: .accent)
                 codexStatusRow("Data access", value: coach.dataConsent ? "On" : "Off",
                                tone: coach.dataConsent ? .positive : .neutral)
             }
+
+            modelSelector
 
             Text(coach.codexBridgeState.detail)
                 .font(StrandFont.footnote)
@@ -504,7 +507,7 @@ struct CoachView: View {
 
     private var connectedProviderLabel: String {
         if coach.provider == .codexLocal {
-            return "\(coach.provider.displayName) · \(coach.dataTargetName)"
+            return "\(coach.provider.displayName) · \(coach.model)"
         }
         return "\(coach.provider.displayName) · \(coach.model)"
     }
