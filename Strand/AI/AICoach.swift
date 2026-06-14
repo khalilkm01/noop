@@ -117,14 +117,14 @@ enum AICoachError: LocalizedError {
         case .decode:
             return "Couldn't read the provider's reply. Try again."
         case .codexLocalUnavailable:
-            return "Codex Local is selected, but NOOP cannot see a supported Codex app-server bridge yet. Use Custom or a cloud provider for in-app chat, or use Codex directly with the local NOOP MCP server."
+            return "Codex Local is selected, but NOOP cannot reach the local Codex bridge yet. Start noop-codex-bridge, then check the bridge again."
         }
     }
 }
 
 enum CodexLocalBridgeStatus: String, Equatable {
     case ready = "Ready"
-    case notFound = "Not found"
+    case notFound = "Not running"
 }
 
 // MARK: - Engine
@@ -290,15 +290,33 @@ final class AICoachEngine: ObservableObject {
     }
 
     func refreshCodexLocalStatus() async {
-        codexLocalBridgeStatus = .notFound
         errorText = nil
+        var req = URLRequest(url: AIProvider.codexLocalHealthURL)
+        req.httpMethod = "GET"
+        req.timeoutInterval = 2
+
+        do {
+            let (data, response) = try await session.data(for: req)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (obj["status"] as? String) == "ready" else {
+                codexLocalBridgeStatus = .notFound
+                return
+            }
+            codexLocalBridgeStatus = .ready
+        } catch {
+            codexLocalBridgeStatus = .notFound
+        }
     }
 
     func connectCodexLocal() {
         errorText = nil
-        guard codexLocalBridgeStatus == .ready else {
-            errorText = AICoachError.codexLocalUnavailable.errorDescription
-            return
+        Task {
+            await refreshCodexLocalStatus()
+            guard codexLocalBridgeStatus == .ready else {
+                errorText = AICoachError.codexLocalUnavailable.errorDescription
+                return
+            }
         }
     }
 

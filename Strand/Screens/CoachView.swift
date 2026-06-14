@@ -209,7 +209,7 @@ struct CoachView: View {
 
     private var setupDescription: String {
         if coach.provider == .codexLocal {
-            return "Coach can use a local Codex app-server bridge when one is available. No API key is stored in NOOP; the data target stays explicit."
+            return "Coach can use the local NOOP Codex bridge. No API key is stored in NOOP; the data target stays explicit."
         }
         return "Coach uses your own API key. Pick a provider, paste a key, and choose a model. Your key is stored securely in the macOS Keychain and never leaves your Mac except as the request you make."
     }
@@ -219,7 +219,7 @@ struct CoachView: View {
             Text("Local bridge").strandOverline()
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 8) {
-                    codexStatusRow("Codex app-server",
+                    codexStatusRow("Bridge",
                                    value: coach.codexLocalBridgeStatus.rawValue,
                                    tone: coach.codexLocalBridgeStatus == .ready ? .positive : .warning)
                     codexStatusRow("Data target", value: coach.dataTargetName, tone: .accent)
@@ -234,7 +234,7 @@ struct CoachView: View {
                 .buttonStyle(.bordered)
                 .tint(StrandPalette.accent)
             }
-            Text("Local MCP reads stay on this Mac. Model reasoning may use your Codex subscription/service once a supported app-server bridge is connected.")
+            Text("The bridge runs on this Mac and invokes your logged-in Codex CLI. Model reasoning may use your Codex subscription/service; raw streams are not sent by default.")
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -569,7 +569,7 @@ struct CoachView: View {
     private var consentDescription: String {
         if coach.provider == .codexLocal {
             return coach.dataConsent
-                ? "On — a compact summary can be shared through the local Codex bridge when it is ready."
+                ? "On — a compact summary can be shared through the local Codex bridge."
                 : "Off — no metrics are exposed to the local Codex bridge."
         }
         return coach.dataConsent
@@ -582,7 +582,7 @@ struct CoachView: View {
         case .custom:
             return "Coach talks only to the server URL you set — point it at a local model (Ollama, LM Studio, llama.cpp) to keep everything on your own machine. Nothing is sent until you ask."
         case .codexLocal:
-            return "NOOP can expose read-only local MCP data to Codex Local. Raw streams are not sent by default; model reasoning may use your Codex subscription/service."
+            return "NOOP sends only the compact coach context to the local Codex bridge. The bridge runs on loopback and uses your logged-in Codex CLI."
         default:
             return "This is the only feature that leaves your Mac — it sends a summary of your metrics to \(coach.provider.displayName) using your own key. Nothing is sent until you ask."
         }
