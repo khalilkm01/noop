@@ -9,6 +9,14 @@ enum AIProvider: String, CaseIterable, Identifiable {
     case custom
     case codexLocal
 
+    static var allCases: [AIProvider] {
+        #if os(macOS)
+        [.openAI, .anthropic, .gemini, .custom, .codexLocal]
+        #else
+        [.openAI, .anthropic, .gemini, .custom]
+        #endif
+    }
+
     var id: String { rawValue }
 
     var displayName: String {

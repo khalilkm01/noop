@@ -213,8 +213,9 @@ final class AICoachEngine: ObservableObject {
         self.codexBridge = CodexBridgeSupervisor(session: session)
 
         // Restore persisted provider / model (falling back to sane defaults).
-        let storedProvider = UserDefaults.standard.string(forKey: Self.providerKey)
+        let restoredProvider = UserDefaults.standard.string(forKey: Self.providerKey)
             .flatMap(AIProvider.init(rawValue:)) ?? .openAI
+        let storedProvider = AIProvider.allCases.contains(restoredProvider) ? restoredProvider : .openAI
         self.provider = storedProvider
 
         let storedModel = UserDefaults.standard.string(forKey: Self.modelKey)

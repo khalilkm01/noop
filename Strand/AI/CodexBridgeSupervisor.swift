@@ -100,6 +100,7 @@ enum CodexBridgeRuntimeState: Equatable {
 
 @MainActor
 final class CodexBridgeSupervisor {
+    #if os(macOS)
     private let session: URLSession
     private let bundle: Bundle
     private var process: Process?
@@ -241,4 +242,25 @@ final class CodexBridgeSupervisor {
         }
         return env
     }
+    #else
+    init(session: URLSession = .shared, bundle: Bundle = .main) {}
+
+    var bundledHelperPath: String { "" }
+
+    func refresh() async -> CodexBridgeRuntimeState {
+        .failed("Codex Local is available only in the macOS app.")
+    }
+
+    func start() async -> CodexBridgeRuntimeState {
+        .failed("Codex Local is available only in the macOS app.")
+    }
+
+    func restart() async -> CodexBridgeRuntimeState {
+        .failed("Codex Local is available only in the macOS app.")
+    }
+
+    func stop() -> CodexBridgeRuntimeState {
+        .stopped
+    }
+    #endif
 }
