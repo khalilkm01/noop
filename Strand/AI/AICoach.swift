@@ -3,20 +3,22 @@ import Combine
 import Security
 import WhoopStore
 
-// MARK: - AI Coach (the one networked feature — strictly opt-in, bring-your-own-key)
+// MARK: - AI Coach (the one networked feature — strictly opt-in)
 //
-// NOOP is offline by design. This file is the single exception: when the user pastes their OWN
-// API key for a provider they choose, NOOP can send a compact text summary of their metrics plus
-// their question to that provider and surface coaching advice. Nothing leaves the device until a
-// key is set AND a question is asked. We never embed our own key, never auto-send, and only ever
-// transmit the small text context built in `buildContext()` + the running chat — no raw streams.
+// NOOP is offline by design. This file is the single exception: when the user chooses a provider,
+// NOOP can send a compact text summary of their metrics plus their question to that provider and
+// surface coaching advice. Cloud providers require the user's own key. Codex Local uses the
+// bundled loopback bridge and the user's existing Codex CLI session. Nothing leaves the device
+// until a provider is configured, data access is explicit, and a question is asked. We never embed
+// our own key, never auto-send, and only ever transmit the small text context built in
+// `buildContext()` + the running chat — no raw streams.
 //
 // Pure macOS: Foundation + URLSession + Security (Keychain). Compiles on macOS 13, Swift 5.
 // Provider wire formats live in Providers/: OpenAI.swift, Anthropic.swift, Gemini.swift.
 
 /// One-line privacy note the UI should display verbatim near the composer / settings.
 public let aiCoachPrivacyNote =
-    "Private by default: nothing is sent until you add your own key and ask a question — only a short text summary of your metrics goes to the provider you pick."
+    "Private by default: nothing is sent until you pick a provider and ask a question — only a short text summary of your metrics goes to the provider you choose."
 
 // MARK: - Chat model
 
@@ -117,14 +119,9 @@ enum AICoachError: LocalizedError {
         case .decode:
             return "Couldn't read the provider's reply. Try again."
         case .codexLocalUnavailable:
-            return "Codex Local is selected, but NOOP cannot reach the local Codex bridge yet. Start noop-codex-bridge, then check the bridge again."
+            return "Codex Local is selected, but the local bridge is not ready yet. Start the bridge from Coach, then try again."
         }
     }
-}
-
-enum CodexLocalBridgeStatus: String, Equatable {
-    case ready = "Ready"
-    case notFound = "Not running"
 }
 
 // MARK: - Engine
@@ -172,10 +169,11 @@ final class AICoachEngine: ObservableObject {
     @Published var customConnected: Bool {
         didSet { UserDefaults.standard.set(customConnected, forKey: Self.customConnectedKey) }
     }
-    @Published var codexLocalBridgeStatus: CodexLocalBridgeStatus = .notFound
+    @Published var codexBridgeState: CodexBridgeRuntimeState = .unknown
 
     private let repo: Repository
     private let session: URLSession
+    private let codexBridge: CodexBridgeSupervisor
 
     private static let providerKey = "ai.provider"
     private static let modelKey = "ai.model"
@@ -212,6 +210,7 @@ final class AICoachEngine: ObservableObject {
     init(repo: Repository, session: URLSession = .shared) {
         self.repo = repo
         self.session = session
+        self.codexBridge = CodexBridgeSupervisor(session: session)
 
         // Restore persisted provider / model (falling back to sane defaults).
         let storedProvider = UserDefaults.standard.string(forKey: Self.providerKey)
@@ -251,7 +250,7 @@ final class AICoachEngine: ObservableObject {
         case .custom:
             return customConnected
         case .codexLocal:
-            return codexLocalBridgeStatus == .ready
+            return codexBridgeState.isReady
         default:
             return hasKey
         }
@@ -291,30 +290,35 @@ final class AICoachEngine: ObservableObject {
 
     func refreshCodexLocalStatus() async {
         errorText = nil
-        var req = URLRequest(url: AIProvider.codexLocalHealthURL)
-        req.httpMethod = "GET"
-        req.timeoutInterval = 2
+        codexBridgeState = await codexBridge.refresh()
+    }
 
-        do {
-            let (data, response) = try await session.data(for: req)
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  (obj["status"] as? String) == "ready" else {
-                codexLocalBridgeStatus = .notFound
-                return
-            }
-            codexLocalBridgeStatus = .ready
-        } catch {
-            codexLocalBridgeStatus = .notFound
+    func startCodexLocalBridge() async {
+        errorText = nil
+        codexBridgeState = .starting
+        codexBridgeState = await codexBridge.start()
+        if !codexBridgeState.isReady {
+            errorText = codexBridgeState.detail
+        }
+    }
+
+    func restartCodexLocalBridge() async {
+        errorText = nil
+        codexBridgeState = .starting
+        codexBridgeState = await codexBridge.restart()
+        if !codexBridgeState.isReady {
+            errorText = codexBridgeState.detail
         }
     }
 
     func connectCodexLocal() {
         errorText = nil
         Task {
-            await refreshCodexLocalStatus()
-            guard codexLocalBridgeStatus == .ready else {
-                errorText = AICoachError.codexLocalUnavailable.errorDescription
+            await startCodexLocalBridge()
+            guard codexBridgeState.isReady else {
+                if errorText == nil {
+                    errorText = AICoachError.codexLocalUnavailable.errorDescription
+                }
                 return
             }
         }
@@ -323,6 +327,10 @@ final class AICoachEngine: ObservableObject {
     /// Disconnect entirely: forget any stored key and un-commit the Custom provider. The base URL is
     /// kept so reconnecting pre-fills it.
     func disconnect() {
+        if provider == .codexLocal {
+            provider = .openAI
+            return
+        }
         AIKeyStore.clear()
         customConnected = false
         objectWillChange.send()
@@ -393,6 +401,15 @@ final class AICoachEngine: ObservableObject {
     func send(_ userText: String) async {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { errorText = AICoachError.emptyQuestion.errorDescription; return }
+        if provider == .codexLocal, !codexBridgeState.isReady {
+            await startCodexLocalBridge()
+            guard codexBridgeState.isReady else {
+                if errorText == nil {
+                    errorText = AICoachError.codexLocalUnavailable.errorDescription
+                }
+                return
+            }
+        }
         guard let key = resolvedKey else { errorText = AICoachError.noKey.errorDescription; return }
 
         errorText = nil

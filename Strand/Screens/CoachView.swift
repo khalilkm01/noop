@@ -4,14 +4,9 @@ import StrandDesign
 
 /// Coach — the one feature in NOOP that talks to the network.
 ///
-/// It is strictly opt-in and bring-your-own-key: the user pastes their own OpenAI
-/// or Anthropic API key (stored in the macOS Keychain by `AICoachEngine`), and only
-/// a compact text summary of their metrics plus their question ever leaves the Mac.
-/// Nothing is sent until a key is saved and a question asked.
-///
-/// This screen compiles against `AICoachEngine`'s public API (the macos-core agent's
-/// contract): `hasKey`, `provider` / `provider.modelOptions`, `model`, `messages`,
-/// `sending`, `errorText`, `setKey(_:)`, `clearKey()`, and `send(_:)`.
+/// It is strictly opt-in: cloud providers use a user-supplied key, Custom points at
+/// a user-controlled OpenAI-compatible server, and Codex Local uses the bundled
+/// loopback bridge plus the user's existing Codex CLI session.
 struct CoachView: View {
     @EnvironmentObject var coach: AICoachEngine
 
@@ -40,6 +35,9 @@ struct CoachView: View {
                        subtitle: "Ask about your charge, effort, rest and workouts — grounded in your own numbers.") {
             if coach.isConfigured {
                 connectedHeader
+                if coach.provider == .codexLocal {
+                    codexLocalPanel
+                }
                 consentBar
                 transcript
                 if let error = coach.errorText, !error.isEmpty {
@@ -55,18 +53,28 @@ struct CoachView: View {
         .toolbar {
             if coach.isConfigured {
                 ToolbarItem {
-                    Button(role: .destructive) {
+                    Button(role: coach.provider == .codexLocal ? nil : .destructive) {
                         coach.disconnect()
                         keyDraft = ""
                     } label: {
-                        Label("Disconnect", systemImage: "gearshape")
+                        Label {
+                            Text(coach.provider == .codexLocal ? "Change provider" : "Disconnect")
+                        } icon: {
+                            Image(systemName: "gearshape")
+                        }
                     }
-                    .help("Forget the saved key and disconnect")
-                    .accessibilityLabel("Disconnect provider")
+                    .help(coach.provider == .codexLocal
+                          ? "Return to provider setup"
+                          : "Forget the saved key and disconnect")
+                    .accessibilityLabel(coach.provider == .codexLocal ? "Change provider" : "Disconnect provider")
                 }
             }
         }
-        .task(id: coach.dataConsent) { await coach.startBriefIfNeeded() }
+        .task(id: coach.provider) {
+            if coach.provider == .codexLocal {
+                await coach.refreshCodexLocalStatus()
+            }
+        }
     }
 
     /// Explicit, revocable permission for the coach to read & send the user's data. Off by default.
@@ -99,10 +107,10 @@ struct CoachView: View {
         StrandCard(padding: 20) {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 10) {
-                    Image(systemName: "sparkles")
+                    Image(systemName: coach.provider == .codexLocal ? "point.3.connected.trianglepath.dotted" : "sparkles")
                         .foregroundStyle(StrandPalette.accent)
                         .accessibilityHidden(true)
-                    Text("Connect a provider")
+                    Text("Coach connection")
                         .font(StrandFont.headline)
                         .foregroundStyle(StrandPalette.textPrimary)
                 }
@@ -172,29 +180,25 @@ struct CoachView: View {
                     }
                 }
 
-                HStack {
-                    if coach.provider == .codexLocal {
-                        Button(action: connectCodexLocal) {
-                            Text("Use Codex Local").frame(minWidth: 120)
+                if coach.provider != .codexLocal {
+                    HStack {
+                        if coach.provider == .custom {
+                            Button(action: connectCustom) {
+                                Text("Connect").frame(minWidth: 90)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(StrandPalette.accent)
+                            .disabled(coach.customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        } else {
+                            Button(action: saveKey) {
+                                Text("Save key").frame(minWidth: 90)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(StrandPalette.accent)
+                            .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(StrandPalette.accent)
-                    } else if coach.provider == .custom {
-                        Button(action: connectCustom) {
-                            Text("Connect").frame(minWidth: 90)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(StrandPalette.accent)
-                        .disabled(coach.customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    } else {
-                        Button(action: saveKey) {
-                            Text("Save key").frame(minWidth: 90)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(StrandPalette.accent)
-                        .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Spacer()
                     }
-                    Spacer()
                 }
 
                 if let error = coach.errorText, !error.isEmpty {
@@ -209,35 +213,41 @@ struct CoachView: View {
 
     private var setupDescription: String {
         if coach.provider == .codexLocal {
-            return "Coach can use the local NOOP Codex bridge. No API key is stored in NOOP; the data target stays explicit."
+            return "Coach can use the bridge bundled inside NOOP. No API key is stored in NOOP; the data target and data access stay explicit."
         }
         return "Coach uses your own API key. Pick a provider, paste a key, and choose a model. Your key is stored securely in the macOS Keychain and never leaves your Mac except as the request you make."
     }
 
     private var codexLocalPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Local bridge").strandOverline()
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    codexStatusRow("Bridge",
-                                   value: coach.codexLocalBridgeStatus.rawValue,
-                                   tone: coach.codexLocalBridgeStatus == .ready ? .positive : .warning)
-                    codexStatusRow("Data target", value: coach.dataTargetName, tone: .accent)
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("Local Codex").strandOverline()
+                StatePill("\(coach.codexBridgeState.title)",
+                          tone: codexBridgeTone,
+                          showsDot: true,
+                          pulsing: codexBridgePulsing)
                 Spacer(minLength: 8)
-                Button {
-                    Task { await coach.refreshCodexLocalStatus() }
-                } label: {
-                    Label("Check bridge", systemImage: "arrow.clockwise")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(.bordered)
-                .tint(StrandPalette.accent)
+                Text(codexBridgeHealthLine)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .lineLimit(1)
             }
-            Text("The bridge runs on this Mac and invokes your logged-in Codex CLI. Model reasoning may use your Codex subscription/service; raw streams are not sent by default.")
+
+            VStack(alignment: .leading, spacing: 8) {
+                codexStatusRow("Bridge", value: coach.codexBridgeState.title,
+                               tone: codexBridgeTone, pulsing: codexBridgePulsing)
+                codexStatusRow("Codex CLI", value: codexCodexLine, tone: codexCLITone)
+                codexStatusRow("Data target", value: coach.dataTargetName, tone: .accent)
+                codexStatusRow("Data access", value: coach.dataConsent ? "On" : "Off",
+                               tone: coach.dataConsent ? .positive : .neutral)
+            }
+
+            Text(coach.codexBridgeState.detail)
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            codexBridgeActions
         }
         .padding(12)
         .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -246,13 +256,138 @@ struct CoachView: View {
         .task { await coach.refreshCodexLocalStatus() }
     }
 
-    private func codexStatusRow(_ title: String, value: String, tone: StrandTone) -> some View {
+    private func codexStatusRow(_ title: String,
+                                value: String,
+                                tone: StrandTone,
+                                pulsing: Bool = false) -> some View {
         HStack(spacing: 8) {
             Text(title)
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .frame(width: 112, alignment: .leading)
-            StatePill("\(value)", tone: tone, showsDot: true)
+            StatePill("\(value)", tone: tone, showsDot: true, pulsing: pulsing)
+        }
+    }
+
+    private var codexBridgeActions: some View {
+        HStack(spacing: 8) {
+            Button {
+                Task { await coach.startCodexLocalBridge() }
+            } label: {
+                Label {
+                    Text(codexPrimaryActionTitle)
+                } icon: {
+                    Image(systemName: codexPrimaryActionIcon)
+                }
+                .frame(minWidth: 130)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(StrandPalette.accent)
+            .disabled(codexBridgePulsing || coach.codexBridgeState.isReady)
+
+            Button {
+                Task { await coach.refreshCodexLocalStatus() }
+            } label: {
+                Label("Check", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.bordered)
+            .tint(StrandPalette.accent)
+            .disabled(codexBridgePulsing)
+
+            if coach.codexBridgeState.isReady {
+                Button {
+                    Task { await coach.restartCodexLocalBridge() }
+                } label: {
+                    Label("Restart", systemImage: "power")
+                }
+                .buttonStyle(.bordered)
+                .tint(StrandPalette.accent)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var codexBridgeTone: StrandTone {
+        switch coach.codexBridgeState {
+        case .ready:
+            return .positive
+        case .starting:
+            return .accent
+        case .degraded, .missingBundledHelper:
+            return .warning
+        case .failed:
+            return .critical
+        case .unknown, .stopped:
+            return .neutral
+        }
+    }
+
+    private var codexCLITone: StrandTone {
+        guard let health = coach.codexBridgeState.health else { return .neutral }
+        return health.isReady ? .positive : .warning
+    }
+
+    private var codexBridgePulsing: Bool {
+        if case .starting = coach.codexBridgeState { return true }
+        return false
+    }
+
+    private var codexPrimaryActionTitle: String {
+        switch coach.codexBridgeState {
+        case .starting:
+            return "Starting"
+        case .ready:
+            return "Ready"
+        default:
+            return "Start bridge"
+        }
+    }
+
+    private var codexPrimaryActionIcon: String {
+        switch coach.codexBridgeState {
+        case .starting:
+            return "clock"
+        case .ready:
+            return "checkmark"
+        default:
+            return "play.fill"
+        }
+    }
+
+    private var codexCodexLine: String {
+        guard let health = coach.codexBridgeState.health else { return "Not checked" }
+        if health.codexVersion == "missing" || !health.isReady { return "Missing" }
+        return health.codexVersion
+    }
+
+    private var codexBridgeHealthLine: String {
+        guard let health = coach.codexBridgeState.health else { return "127.0.0.1:37337" }
+        if let pid = health.pid {
+            return "pid \(pid)"
+        }
+        return health.transport
+    }
+
+    private var canRefreshModels: Bool {
+        switch coach.provider {
+        case .custom:
+            return !coach.customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .codexLocal:
+            return coach.codexBridgeState.isReady
+        default:
+            return coach.hasKey
+        }
+    }
+
+    private var refreshModelsHelp: String {
+        switch coach.provider {
+        case .custom:
+            return "Fetch models from the OpenAI-compatible server URL"
+        case .codexLocal:
+            return "Fetch the model list from the local Codex bridge"
+        default:
+            return "Fetch the available models from \(coach.provider.displayName) using your saved key"
         }
     }
 
@@ -272,8 +407,8 @@ struct CoachView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(StrandPalette.accent)
-                .disabled(!coach.hasKey)
-                .help("Fetch the available models from \(coach.provider.displayName) using your saved key")
+                .disabled(!canRefreshModels)
+                .help(refreshModelsHelp)
                 .accessibilityLabel("Refresh models from provider")
             }
 
@@ -342,6 +477,15 @@ struct CoachView: View {
     private var connectedHeader: some View {
         HStack(spacing: 10) {
             StatePill("\(connectedProviderLabel)", tone: .accent, showsDot: true)
+            if coach.provider == .codexLocal {
+                StatePill("\(coach.codexBridgeState.title)",
+                          tone: codexBridgeTone,
+                          showsDot: true,
+                          pulsing: codexBridgePulsing)
+                StatePill("\(coach.dataConsent ? "Data on" : "Data off")",
+                          tone: coach.dataConsent ? .positive : .neutral,
+                          showsDot: true)
+            }
             Spacer()
             if coach.sending {
                 StatePill("Thinking", tone: .accent, pulsing: true)
@@ -391,12 +535,19 @@ struct CoachView: View {
             Text("Ask your first question")
                 .font(StrandFont.headline)
                 .foregroundStyle(StrandPalette.textPrimary)
-            Text("Coach reads a summary of your last two weeks plus 30-day averages and recent workouts, then answers in plain language. Try a suggestion below.")
+            Text(emptyTranscriptDescription)
                 .font(StrandFont.subhead)
                 .foregroundStyle(StrandPalette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
+    }
+
+    private var emptyTranscriptDescription: String {
+        if coach.dataConsent {
+            return "Coach reads a compact summary of your last two weeks, 30-day averages and recent workouts, then answers in plain language. Try a suggestion below."
+        }
+        return "Data access is off. Ask generally, or turn it on when you want coaching grounded in your real NOOP numbers."
     }
 
     @ViewBuilder
