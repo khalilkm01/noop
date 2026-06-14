@@ -86,7 +86,7 @@ enum CodexBridgeRuntimeState: Equatable {
         case .degraded(let health):
             return "The bridge is reachable, but Codex CLI is not executable at \(health.codexCLI)."
         case .missingBundledHelper(let path):
-            return "The app bundle does not contain \(path). Rebuild NOOP Personal."
+            return "The app bundle does not contain \(path). Rebuild NOOP."
         case .failed(let message):
             return message
         }
