@@ -319,6 +319,8 @@ struct CoachView: View {
             return .accent
         case .degraded, .missingBundledHelper:
             return .warning
+        case .tokenMismatch:
+            return .warning
         case .failed:
             return .critical
         case .unknown, .stopped:
@@ -340,6 +342,8 @@ struct CoachView: View {
         switch coach.codexBridgeState {
         case .starting:
             return "Starting"
+        case .tokenMismatch:
+            return "Check bridge"
         case .ready:
             return "Stop bridge"
         default:
@@ -351,6 +355,8 @@ struct CoachView: View {
         switch coach.codexBridgeState {
         case .starting:
             return "clock"
+        case .tokenMismatch:
+            return "arrow.clockwise.circle"
         case .ready:
             return "stop.fill"
         default:

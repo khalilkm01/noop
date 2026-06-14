@@ -56,4 +56,25 @@ final class CodexBridgeStateTests: XCTestCase {
         XCTAssertEqual(state.title, "Needs Codex")
         XCTAssertTrue(state.detail.contains("Codex CLI is not executable"))
     }
+
+    func testRuntimeStateExplainsTokenMismatch() throws {
+        let data = Data("""
+        {
+          "status": "ready",
+          "transport": "codex-exec",
+          "base_url": "http://127.0.0.1:37337/v1",
+          "codex_cli": "/Applications/Codex.app/Contents/Resources/codex",
+          "codex_version": "codex-cli 0.140.0-alpha.2",
+          "model": "codex-config-default"
+        }
+        """.utf8)
+
+        let health = try CodexBridgeHealth.decode(data)
+        let state = CodexBridgeRuntimeState.tokenMismatch(health)
+
+        XCTAssertFalse(state.isReady)
+        XCTAssertNotNil(state.health)
+        XCTAssertEqual(state.title, "Restart needed")
+        XCTAssertTrue(state.detail.contains("does not accept this app's token"))
+    }
 }

@@ -36,6 +36,7 @@ enum CodexBridgeRuntimeState: Equatable {
     case starting
     case ready(CodexBridgeHealth)
     case degraded(CodexBridgeHealth)
+    case tokenMismatch(CodexBridgeHealth)
     case missingBundledHelper(String)
     case failed(String)
 
@@ -46,7 +47,7 @@ enum CodexBridgeRuntimeState: Equatable {
 
     var health: CodexBridgeHealth? {
         switch self {
-        case .ready(let health), .degraded(let health):
+        case .ready(let health), .degraded(let health), .tokenMismatch(let health):
             return health
         default:
             return nil
@@ -65,6 +66,8 @@ enum CodexBridgeRuntimeState: Equatable {
             return "Ready"
         case .degraded:
             return "Needs Codex"
+        case .tokenMismatch:
+            return "Restart needed"
         case .missingBundledHelper:
             return "Missing helper"
         case .failed:
@@ -85,6 +88,8 @@ enum CodexBridgeRuntimeState: Equatable {
             return "Bridge \(health.bridgeVersion ?? "1.0.0") is listening on \(health.baseURL) with \(version)."
         case .degraded(let health):
             return "The bridge is reachable, but Codex CLI is not executable at \(health.codexCLI)."
+        case .tokenMismatch:
+            return "A local bridge is already listening, but it does not accept this app's token. Quit the other NOOP build or restart the bridge from the app that started it."
         case .missingBundledHelper(let path):
             return "The app bundle does not contain \(path). Rebuild NOOP."
         case .failed(let message):
@@ -113,6 +118,9 @@ final class CodexBridgeSupervisor {
     func refresh() async -> CodexBridgeRuntimeState {
         do {
             let health = try await fetchHealth()
+            if await authProbe() == .rejected {
+                return .tokenMismatch(health)
+            }
             return health.isReady ? .ready(health) : .degraded(health)
         } catch {
             return .stopped
@@ -121,6 +129,12 @@ final class CodexBridgeSupervisor {
 
     func start() async -> CodexBridgeRuntimeState {
         let existing = await refresh()
+        if case .tokenMismatch = existing {
+            if let process, process.isRunning {
+                return await restart()
+            }
+            return existing
+        }
         if existing.health != nil {
             return existing
         }
@@ -177,6 +191,34 @@ final class CodexBridgeSupervisor {
             throw URLError(.badServerResponse)
         }
         return try CodexBridgeHealth.decode(data)
+    }
+
+    private enum AuthProbeResult {
+        case accepted
+        case rejected
+        case unavailable
+    }
+
+    private func authProbe() async -> AuthProbeResult {
+        var req = URLRequest(url: AIProvider.codexLocal.modelsEndpoint)
+        req.httpMethod = "GET"
+        req.timeoutInterval = 2
+        CodexBridgeAccess.authorize(&req)
+
+        do {
+            let (_, response) = try await session.data(for: req)
+            guard let http = response as? HTTPURLResponse else { return .unavailable }
+            switch http.statusCode {
+            case 200...299:
+                return .accepted
+            case 401, 403:
+                return .rejected
+            default:
+                return .unavailable
+            }
+        } catch {
+            return .unavailable
+        }
     }
 
     private func launchHelper(at path: String) throws {

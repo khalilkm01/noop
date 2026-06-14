@@ -391,6 +391,9 @@ final class AICoachEngine: ObservableObject {
             var merged = builtin + discovered
             if !merged.contains(model) { merged.insert(model, at: 0) }
             availableModels = merged
+        } catch let e as AICoachError {
+            errorText = e.errorDescription
+            return
         } catch {
             errorText = AICoachError.network(error.localizedDescription).errorDescription
             return

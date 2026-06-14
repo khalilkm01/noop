@@ -228,6 +228,7 @@ public final class CodexExecRunner: CodexRunning, @unchecked Sendable {
             if process.isRunning {
                 kill(process.processIdentifier, SIGKILL)
             }
+            process.waitUntilExit()
             throw BridgeError.codexTimedOut
         }
 
