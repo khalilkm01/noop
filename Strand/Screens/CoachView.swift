@@ -150,7 +150,7 @@ struct CoachView: View {
                                     .strokeBorder(StrandPalette.hairline, lineWidth: 1))
                                 .disableAutocorrection(true)
                                 .accessibilityLabel("Server URL")
-                            Text("Any OpenAI-compatible server — Ollama, LM Studio, llama.cpp, or your own gateway. Stays on your network; nothing leaves your Mac.")
+                            Text("Any OpenAI-compatible server — Ollama, LM Studio, llama.cpp, or your own gateway. Stays on your network; nothing leaves \(Platform.deviceNounPhrase).")
                                 .font(StrandFont.footnote)
                                 .foregroundStyle(StrandPalette.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -271,7 +271,11 @@ struct CoachView: View {
     private var codexBridgeActions: some View {
         HStack(spacing: 8) {
             Button {
-                Task { await coach.startCodexLocalBridge() }
+                if coach.codexBridgeState.isReady {
+                    coach.stopCodexLocalBridge()
+                } else {
+                    Task { await coach.startCodexLocalBridge() }
+                }
             } label: {
                 Label {
                     Text(codexPrimaryActionTitle)
@@ -282,7 +286,7 @@ struct CoachView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(StrandPalette.accent)
-            .disabled(codexBridgePulsing || coach.codexBridgeState.isReady)
+            .disabled(codexBridgePulsing)
 
             Button {
                 Task { await coach.refreshCodexLocalStatus() }
@@ -337,7 +341,7 @@ struct CoachView: View {
         case .starting:
             return "Starting"
         case .ready:
-            return "Ready"
+            return "Stop bridge"
         default:
             return "Start bridge"
         }
@@ -348,7 +352,7 @@ struct CoachView: View {
         case .starting:
             return "clock"
         case .ready:
-            return "checkmark"
+            return "stop.fill"
         default:
             return "play.fill"
         }
@@ -361,7 +365,7 @@ struct CoachView: View {
     }
 
     private var codexBridgeHealthLine: String {
-        guard let health = coach.codexBridgeState.health else { return "127.0.0.1:37337" }
+        guard let health = coach.codexBridgeState.health else { return AIProvider.codexLocalAuthority }
         if let pid = health.pid {
             return "pid \(pid)"
         }
