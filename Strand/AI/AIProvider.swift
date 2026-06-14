@@ -7,6 +7,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
     case anthropic
     case gemini
     case custom
+    case codexLocal
 
     var id: String { rawValue }
 
@@ -16,6 +17,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         case .anthropic: return "Anthropic"
         case .gemini:    return "Google Gemini"
         case .custom:    return "Custom (OpenAI-compatible)"
+        case .codexLocal: return "Codex Local"
         }
     }
 
@@ -25,6 +27,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         case .anthropic: return "claude-sonnet-4-6"
         case .gemini:    return "gemini-2.5-flash"
         case .custom:    return ""   // the user picks the model their server serves
+        case .codexLocal: return "Codex app-server"
         }
     }
 
@@ -53,6 +56,8 @@ enum AIProvider: String, CaseIterable, Identifiable {
             ]
         case .custom:
             return []   // populated from the server's /models (refreshModels) or typed in
+        case .codexLocal:
+            return ["Codex app-server"]
         }
     }
 
@@ -62,6 +67,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         case .anthropic: return URL(string: "https://api.anthropic.com/v1/messages")!
         case .gemini:    return URL(string: "https://generativelanguage.googleapis.com/v1beta/models")!
         case .custom:    return AIProvider.customURL(path: "/chat/completions")
+        case .codexLocal: return URL(string: "http://localhost")!
         }
     }
 
@@ -71,6 +77,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         case .anthropic: return URL(string: "https://api.anthropic.com/v1/models")!
         case .gemini:    return URL(string: "https://generativelanguage.googleapis.com/v1beta/models")!
         case .custom:    return AIProvider.customURL(path: "/models")
+        case .codexLocal: return URL(string: "http://localhost")!
         }
     }
 
@@ -80,6 +87,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         case .anthropic: return AnthropicClient()
         case .gemini:    return GeminiClient()
         case .custom:    return CustomClient()
+        case .codexLocal: return CodexLocalClient()
         }
     }
 

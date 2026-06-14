@@ -78,9 +78,7 @@ struct CoachView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Let the coach use my data")
                     .font(StrandFont.subhead).foregroundStyle(StrandPalette.textPrimary)
-                Text(coach.dataConsent
-                     ? "On — your charge, rest, HRV and workouts are shared with the provider for tailored coaching."
-                     : "Off — the coach answers generally and sends none of your metrics.")
+                Text(consentDescription)
                     .font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -109,7 +107,7 @@ struct CoachView: View {
                         .foregroundStyle(StrandPalette.textPrimary)
                 }
 
-                Text("Coach uses your own API key. Pick a provider, paste a key, and choose a model. Your key is stored securely in the macOS Keychain and never leaves your Mac except as the request you make.")
+                Text(setupDescription)
                     .font(StrandFont.subhead)
                     .foregroundStyle(StrandPalette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -123,15 +121,44 @@ struct CoachView: View {
                         }
                     }
                     .labelsHidden()
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
                     .accessibilityLabel("Provider")
                 }
 
-                // Server URL (Custom / local LLM only)
-                if coach.provider == .custom {
+                if coach.provider == .codexLocal {
+                    codexLocalPanel
+                } else {
+                    // Server URL (Custom / local LLM only)
+                    if coach.provider == .custom {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Server URL").strandOverline()
+                            TextField("http://localhost:11434/v1", text: $coach.customBaseURL)
+                                .textFieldStyle(.plain)
+                                .font(StrandFont.body)
+                                .foregroundStyle(StrandPalette.textPrimary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 9)
+                                .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .strokeBorder(StrandPalette.hairline, lineWidth: 1))
+                                .disableAutocorrection(true)
+                                .accessibilityLabel("Server URL")
+                            Text("Any OpenAI-compatible server — Ollama, LM Studio, llama.cpp, or your own gateway. Stays on your network; nothing leaves your Mac.")
+                                .font(StrandFont.footnote)
+                                .foregroundStyle(StrandPalette.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    // Model
+                    modelSelector
+
+                    // Key
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Server URL").strandOverline()
-                        TextField("http://localhost:11434/v1", text: $coach.customBaseURL)
+                        Text(coach.provider == .custom ? "API key (optional)" : "API key").strandOverline()
+                        SecureField(coach.provider == .custom
+                                    ? "Only if your server requires one"
+                                    : "Paste your \(coach.provider.displayName) API key", text: $keyDraft)
                             .textFieldStyle(.plain)
                             .font(StrandFont.body)
                             .foregroundStyle(StrandPalette.textPrimary)
@@ -140,38 +167,19 @@ struct CoachView: View {
                             .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .strokeBorder(StrandPalette.hairline, lineWidth: 1))
-                            .disableAutocorrection(true)
-                            .accessibilityLabel("Server URL")
-                        Text("Any OpenAI-compatible server — Ollama, LM Studio, llama.cpp, or your own gateway. Stays on your network; nothing leaves your Mac.")
-                            .font(StrandFont.footnote)
-                            .foregroundStyle(StrandPalette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .onSubmit { coach.provider == .custom ? connectCustom() : saveKey() }
+                            .accessibilityLabel("API key")
                     }
                 }
 
-                // Model
-                modelSelector
-
-                // Key
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(coach.provider == .custom ? "API key (optional)" : "API key").strandOverline()
-                    SecureField(coach.provider == .custom
-                                ? "Only if your server requires one"
-                                : "Paste your \(coach.provider.displayName) API key", text: $keyDraft)
-                        .textFieldStyle(.plain)
-                        .font(StrandFont.body)
-                        .foregroundStyle(StrandPalette.textPrimary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(StrandPalette.hairline, lineWidth: 1))
-                        .onSubmit { coach.provider == .custom ? connectCustom() : saveKey() }
-                        .accessibilityLabel("API key")
-                }
-
                 HStack {
-                    if coach.provider == .custom {
+                    if coach.provider == .codexLocal {
+                        Button(action: connectCodexLocal) {
+                            Text("Use Codex Local").frame(minWidth: 120)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(StrandPalette.accent)
+                    } else if coach.provider == .custom {
                         Button(action: connectCustom) {
                             Text("Connect").frame(minWidth: 90)
                         }
@@ -189,9 +197,62 @@ struct CoachView: View {
                     Spacer()
                 }
 
+                if let error = coach.errorText, !error.isEmpty {
+                    errorBanner(error)
+                }
+
                 Divider().overlay(StrandPalette.hairline)
                 privacyFootnote
             }
+        }
+    }
+
+    private var setupDescription: String {
+        if coach.provider == .codexLocal {
+            return "Coach can use a local Codex app-server bridge when one is available. No API key is stored in NOOP; the data target stays explicit."
+        }
+        return "Coach uses your own API key. Pick a provider, paste a key, and choose a model. Your key is stored securely in the macOS Keychain and never leaves your Mac except as the request you make."
+    }
+
+    private var codexLocalPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Local bridge").strandOverline()
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    codexStatusRow("Codex app-server",
+                                   value: coach.codexLocalBridgeStatus.rawValue,
+                                   tone: coach.codexLocalBridgeStatus == .ready ? .positive : .warning)
+                    codexStatusRow("Data target", value: coach.dataTargetName, tone: .accent)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    Task { await coach.refreshCodexLocalStatus() }
+                } label: {
+                    Label("Check bridge", systemImage: "arrow.clockwise")
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.bordered)
+                .tint(StrandPalette.accent)
+            }
+            Text("Local MCP reads stay on this Mac. Model reasoning may use your Codex subscription/service once a supported app-server bridge is connected.")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(StrandPalette.hairline, lineWidth: 1))
+        .task { await coach.refreshCodexLocalStatus() }
+    }
+
+    private func codexStatusRow(_ title: String, value: String, tone: StrandTone) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .frame(width: 112, alignment: .leading)
+            StatePill("\(value)", tone: tone, showsDot: true)
         }
     }
 
@@ -280,12 +341,19 @@ struct CoachView: View {
 
     private var connectedHeader: some View {
         HStack(spacing: 10) {
-            StatePill("\(coach.provider.displayName) · \(coach.model)", tone: .accent, showsDot: true)
+            StatePill("\(connectedProviderLabel)", tone: .accent, showsDot: true)
             Spacer()
             if coach.sending {
                 StatePill("Thinking", tone: .accent, pulsing: true)
             }
         }
+    }
+
+    private var connectedProviderLabel: String {
+        if coach.provider == .codexLocal {
+            return "\(coach.provider.displayName) · \(coach.dataTargetName)"
+        }
+        return "\(coach.provider.displayName) · \(coach.model)"
     }
 
     private var transcript: some View {
@@ -464,9 +532,7 @@ struct CoachView: View {
 
     private var privacyFootnote: some View {
         Label {
-            Text(coach.provider == .custom
-                 ? "Coach talks only to the server URL you set — point it at a local model (Ollama, LM Studio, llama.cpp) to keep everything on your own machine. Nothing is sent until you ask."
-                 : "This is the only feature that leaves your Mac — it sends a summary of your metrics to \(coach.provider.displayName) using your own key. Nothing is sent until you ask.")
+            Text(privacyDescription)
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -494,6 +560,32 @@ struct CoachView: View {
             keyDraft = ""
         }
         coach.connectCustom()
+    }
+
+    private func connectCodexLocal() {
+        coach.connectCodexLocal()
+    }
+
+    private var consentDescription: String {
+        if coach.provider == .codexLocal {
+            return coach.dataConsent
+                ? "On — a compact summary can be shared through the local Codex bridge when it is ready."
+                : "Off — no metrics are exposed to the local Codex bridge."
+        }
+        return coach.dataConsent
+            ? "On — your charge, rest, HRV and workouts are shared with the provider for tailored coaching."
+            : "Off — the coach answers generally and sends none of your metrics."
+    }
+
+    private var privacyDescription: String {
+        switch coach.provider {
+        case .custom:
+            return "Coach talks only to the server URL you set — point it at a local model (Ollama, LM Studio, llama.cpp) to keep everything on your own machine. Nothing is sent until you ask."
+        case .codexLocal:
+            return "NOOP can expose read-only local MCP data to Codex Local. Raw streams are not sent by default; model reasoning may use your Codex subscription/service."
+        default:
+            return "This is the only feature that leaves your Mac — it sends a summary of your metrics to \(coach.provider.displayName) using your own key. Nothing is sent until you ask."
+        }
     }
 
     private func send(_ text: String) {

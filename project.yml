@@ -9,6 +9,10 @@ options:
   # the String Catalog (Strand/Resources/Localizable.xcstrings) carries this as the
   # source language and is where additional languages are added.
   developmentLanguage: en
+configs:
+  Debug: debug
+  Personal: debug
+  Release: release
 settings:
   base:
     MARKETING_VERSION: "2.12.0"
@@ -23,6 +27,8 @@ settings:
     # Build for both Apple Silicon and Intel so the release runs on every Mac.
     ARCHS: "$(ARCHS_STANDARD)"
   configs:
+    Personal:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG PERSONAL"
     Release:
       # Distribution builds must produce a universal binary, not just the host arch.
       ONLY_ACTIVE_ARCH: NO
@@ -55,8 +61,9 @@ targets:
     info:
       path: Strand/Resources/Info.plist
       properties:
-        CFBundleName: NOOP
-        CFBundleDisplayName: NOOP
+        CFBundleName: "$(APP_DISPLAY_NAME)"
+        CFBundleDisplayName: "$(APP_DISPLAY_NAME)"
+        CFBundleIconFile: "$(APP_ICON_FILE)"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "102"
         LSMinimumSystemVersion: "13.0"
@@ -81,6 +88,8 @@ targets:
         com.apple.security.network.client: true
     settings:
       base:
+        APP_DISPLAY_NAME: NOOP
+        APP_ICON_FILE: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.noop
         PRODUCT_NAME: NOOP
         # Pin the Swift module name so `@testable import Strand` resolves even though PRODUCT_NAME is
@@ -88,10 +97,18 @@ targets:
         PRODUCT_MODULE_NAME: Strand
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
+        ENABLE_DEBUG_DYLIB: NO
         # Hardened Runtime closes the DYLD_INSERT_LIBRARIES injection vector for the
         # distributed (ad-hoc) build. The app uses no JIT / unsigned-exec memory, so it's safe.
         ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES
+      configs:
+        Personal:
+          APP_DISPLAY_NAME: "NOOP Personal"
+          APP_ICON_FILE: AppIconPersonal
+          PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.noop.personal
+          PRODUCT_NAME: "NOOP Personal"
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIconPersonal
     dependencies:
       - package: WhoopProtocol
       - package: WhoopStore
@@ -116,7 +133,9 @@ targets:
         # Host the unit tests in the app so `@testable import Strand` links against the real app module.
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/NOOP.app/Contents/MacOS/NOOP"
         BUNDLE_LOADER: "$(TEST_HOST)"
-
+      configs:
+        Personal:
+          TEST_HOST: "$(BUILT_PRODUCTS_DIR)/NOOP Personal.app/Contents/MacOS/NOOP Personal"
   # ---------------------------------------------------------------------------
   # iOS app target (community build-from-source; never distributed via the App
   # Store — NOOP stays anonymous). Reuses the five shared packages + most of the
@@ -253,6 +272,8 @@ schemes:
       config: Debug
     test:
       config: Debug
+      debugEnabled: false
+      disableMainThreadChecker: true
       targets:
         - StrandTests
   NOOPiOS:
@@ -261,3 +282,15 @@ schemes:
         NOOPiOS: all
     run:
       config: Debug
+  NOOPPersonal:
+    build:
+      targets:
+        Strand: all
+    run:
+      config: Personal
+    test:
+      config: Personal
+      debugEnabled: false
+      disableMainThreadChecker: true
+      targets:
+        - StrandTests

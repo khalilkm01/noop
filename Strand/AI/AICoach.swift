@@ -97,6 +97,7 @@ enum AICoachError: LocalizedError {
     case server(Int, String)
     case network(String)
     case decode
+    case codexLocalUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -115,8 +116,15 @@ enum AICoachError: LocalizedError {
             return "Network problem: \(detail). The coach is the only feature that needs the internet."
         case .decode:
             return "Couldn't read the provider's reply. Try again."
+        case .codexLocalUnavailable:
+            return "Codex Local is selected, but NOOP cannot see a supported Codex app-server bridge yet. Use Custom or a cloud provider for in-app chat, or use Codex directly with the local NOOP MCP server."
         }
     }
+}
+
+enum CodexLocalBridgeStatus: String, Equatable {
+    case ready = "Ready"
+    case notFound = "Not found"
 }
 
 // MARK: - Engine
@@ -164,6 +172,7 @@ final class AICoachEngine: ObservableObject {
     @Published var customConnected: Bool {
         didSet { UserDefaults.standard.set(customConnected, forKey: Self.customConnectedKey) }
     }
+    @Published var codexLocalBridgeStatus: CodexLocalBridgeStatus = .notFound
 
     private let repo: Repository
     private let session: URLSession
@@ -237,13 +246,30 @@ final class AICoachEngine: ObservableObject {
     /// True once the coach can actually send: a stored key for the cloud providers, or — for the
     /// Custom (local) provider — a committed base URL (a key is optional there, as local servers
     /// usually need none). Gates the setup card vs. the live chat.
-    var isConfigured: Bool { provider == .custom ? customConnected : hasKey }
+    var isConfigured: Bool {
+        switch provider {
+        case .custom:
+            return customConnected
+        case .codexLocal:
+            return codexLocalBridgeStatus == .ready
+        default:
+            return hasKey
+        }
+    }
 
     /// The key to send with a request: the stored key, or an empty string for the keyless Custom
     /// provider. `nil` means "not configured" — the caller surfaces `.noKey`.
     private var resolvedKey: String? {
         if let k = AIKeyStore.read() { return k }
-        return provider == .custom ? "" : nil
+        return (provider == .custom || provider == .codexLocal) ? "" : nil
+    }
+
+    var dataTargetName: String {
+        #if PERSONAL
+        return "NOOP Personal"
+        #else
+        return "NOOP Standard"
+        #endif
     }
 
     /// Commit the Custom (local) provider once the user has entered a server URL. Optionally stores a
@@ -260,6 +286,19 @@ final class AICoachEngine: ObservableObject {
                let first = availableModels.first {
                 model = first
             }
+        }
+    }
+
+    func refreshCodexLocalStatus() async {
+        codexLocalBridgeStatus = .notFound
+        errorText = nil
+    }
+
+    func connectCodexLocal() {
+        errorText = nil
+        guard codexLocalBridgeStatus == .ready else {
+            errorText = AICoachError.codexLocalUnavailable.errorDescription
+            return
         }
     }
 
